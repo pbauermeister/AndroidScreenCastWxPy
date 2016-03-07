@@ -160,7 +160,7 @@ class MainPanel(wx.Panel):
 
 class MainFrame(wx.Frame):
     def __init__(self, parent):
-        wx.Frame.__init__(self, parent, -1, title='Test', size=(600,800))
+        wx.Frame.__init__(self, parent, -1, title='Android screencast', size=(600,800))
         self.panel = MainPanel(self)
         self.Show()
         self.Bind(wx.EVT_CLOSE, self.OnClose)
