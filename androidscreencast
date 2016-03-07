@@ -88,8 +88,7 @@ class WorkerThread(Thread):
                 print >>sys.stderr, "OK"
             if not err and self._readyFunc():                
                 if not self._want_abort:
-                    wx.PostEvent(self._notify_window, ResultEvent(image))
-                    
+                    wx.PostEvent(self._notify_window, ResultEvent(image))                    
             else:
                 print >>sys.stderr, err
                 time.sleep(0.5)
