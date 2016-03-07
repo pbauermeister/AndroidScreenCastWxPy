@@ -1,0 +1,176 @@
+#!/usr/bin/env python2
+
+"""AndroidScreenCastWxPy (aka androidscreencast)
+
+(C) 2016 by Pascal Bauermeister <pascal.bauermeister@gmail.com>
+
+This program casts the screen of an Android device (connected via usb)
+to a window on your computer.
+
+As it is using screencap via adb, the rate is quite low (a few FPS),
+but sufficient for slow-changing apps.
+
+This is probably the maximum speed one can achieve with ANY (*)
+device. Faster solutions require either a rooted Android device
+(allowing for e.g. VNC) or that the PC is pretending to be a
+Chromecast.
+
+(*) The device must however have USB debugging enabled.
+
+For simplicity, you need Python 2.7, wx, and adb installed. The
+downside is that there is currently no Debian, OSX nor Windows install
+packaging. The good side is that there is one single executable file
+(this one).
+
+"""
+
+import wx
+import time
+import sys
+from threading import *
+import subprocess
+import cStringIO
+
+###############################################################################
+# Adb screencap:
+# http://blog.shvetsov.com/2013/02/grab-android-screenshot-to-computer-via.html
+###############################################################################
+
+def grab_android():
+    try:
+        output = subprocess.check_output(["adb", "shell", "screencap", "-p"])
+        data = output.replace("\r\n", "\n")
+    except OSError, e:
+        return None, e
+    except subprocess.CalledProcessError, e:
+        return None, e
+
+    stream = wx.InputStream(cStringIO.StringIO(data))
+    image = wx.ImageFromStream(stream) 
+    return image, None
+
+###############################################################################
+# Worker threading:
+# http://wiki.wxpython.org/LongRunningTasks
+###############################################################################
+
+# Define notification event for thread completion
+EVT_RESULT_ID = wx.NewId()
+
+def EVT_RESULT(win, func):
+    """Define Result Event."""
+    win.Connect(-1, -1, EVT_RESULT_ID, func)
+
+class ResultEvent(wx.PyEvent):
+    """Simple event to carry arbitrary result data."""
+    def __init__(self, data):
+        """Init Result Event."""
+        wx.PyEvent.__init__(self)
+        self.SetEventType(EVT_RESULT_ID)
+        self.data = data
+
+# Thread class that executes processing
+class WorkerThread(Thread):
+
+    def __init__(self, notify_window, readyFunc):
+        """Init Worker Thread Class."""
+        Thread.__init__(self)
+        self._notify_window = notify_window
+        self._want_abort = 0
+        self._readyFunc = readyFunc # tells if GUI thread is ready
+        self.start()
+
+    def run(self):
+        oldErr = None
+        while not self._want_abort:
+            image, err = grab_android()
+            if not err and oldErr:
+                print >>sys.stderr, "OK"
+            if not err and self._readyFunc():                
+                if not self._want_abort:
+                    wx.PostEvent(self._notify_window, ResultEvent(image))
+                    
+            else:
+                print >>sys.stderr, err
+                time.sleep(0.5)
+            oldErr = err
+
+    def abort(self):
+        self._want_abort = 1
+
+###############################################################################
+# Simple image viewer:
+# https://groups.google.com/forum/#!topic/wxpython-users/_NeQ65pK5fc
+###############################################################################
+
+class MainPanel(wx.Panel):
+    def __init__(self, parent):
+        wx.Panel.__init__(self, parent, -1, style=wx.FULL_REPAINT_ON_RESIZE)
+        self.Bind(wx.EVT_SIZE, self.OnSize)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.img = None #wx.Image('img.png', wx.BITMAP_TYPE_PNG)
+        self.bmp = None
+        self.posx = 0
+        self.posy = 0
+        self.ready = True
+        self.worker = WorkerThread(self, self.isReady)
+        EVT_RESULT(self,self.OnResult)
+
+    def isReady(self):
+        return self.ready
+
+    def OnSize(self, event):
+        #print "> OnSize"
+        if not self.img: return
+        x, y = self.GetSize()
+        posx, posy = 0, 0
+        self.imgx, self.imgy = self.img.GetSize()
+        newy = int(float(x)/self.imgx*self.imgy)
+        if newy < y:
+            posy = int((y - newy) / 2) 
+            y = newy
+        else:
+            newx = int(float(y)/self.imgy*self.imgx)
+            posx = int((x - newx) / 2)
+            x = newx        
+
+        img = self.img.Scale(x,y, wx.IMAGE_QUALITY_HIGH)
+        self.bmp = wx.BitmapFromImage(img)
+        self.posx = posx
+        self.posy = posy
+
+    def OnPaint(self, event):
+        #print "> OnPaint"
+        if self.bmp:
+            dc = wx.PaintDC(self)
+            dc.Clear()
+            dc.DrawBitmap(self.bmp, self.posx, self.posy)
+
+    def OnClose(self, event):
+        #print "> OnClose Panel"
+        self.worker.abort()
+
+    def OnResult(self, event):
+        #print "> OnResult", event.data
+        self.ready = False
+        self.img = event.data
+        self.OnSize(None)
+        self.OnPaint(None)
+        self.ready = True
+        #wx.Yield()
+
+class MainFrame(wx.Frame):
+    def __init__(self, parent):
+        wx.Frame.__init__(self, parent, -1, title='Test', size=(600,800))
+        self.panel = MainPanel(self)
+        self.Show()
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+
+    def OnClose(self, event):
+        #print "> OnClose Frame"
+        self.panel.OnClose(event)
+        self.Destroy()
+
+app = wx.App(0)
+frame = MainFrame(None)
+app.MainLoop()
