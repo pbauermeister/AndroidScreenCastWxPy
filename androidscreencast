@@ -54,6 +54,11 @@ def grab_android():
 # http://wiki.wxpython.org/LongRunningTasks
 ###############################################################################
 
+# Will be used as readyFlag:
+class Value(object):
+    """Container for just anything"""
+    pass
+
 # Define notification event for thread completion
 EVT_RESULT_ID = wx.NewId()
 
@@ -72,12 +77,12 @@ class ResultEvent(wx.PyEvent):
 # Thread class that executes processing
 class WorkerThread(Thread):
 
-    def __init__(self, notify_window, readyFunc):
+    def __init__(self, notify_window, readyFlag):
         """Init Worker Thread Class."""
         Thread.__init__(self)
         self._notify_window = notify_window
         self._want_abort = 0
-        self._readyFunc = readyFunc # tells if GUI thread is ready
+        self._readyFlag = readyFlag # tells if GUI thread is ready
         self.start()
 
     def run(self):
@@ -86,7 +91,7 @@ class WorkerThread(Thread):
             image, err = grab_android()
             if not err and oldErr:
                 print >>sys.stderr, "OK"
-            if not err and self._readyFunc():                
+            if not err and self._readyFlag.ready:
                 if not self._want_abort:
                     wx.PostEvent(self._notify_window, ResultEvent(image))                    
             else:
@@ -103,7 +108,7 @@ class WorkerThread(Thread):
 ###############################################################################
 
 class MainPanel(wx.Panel):
-    def __init__(self, parent):
+    def __init__(self, parent, readyFlag):
         wx.Panel.__init__(self, parent, -1, style=wx.FULL_REPAINT_ON_RESIZE)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.Bind(wx.EVT_PAINT, self.OnPaint)
@@ -111,12 +116,10 @@ class MainPanel(wx.Panel):
         self.bmp = None
         self.posx = 0
         self.posy = 0
-        self.ready = True
-        self.worker = WorkerThread(self, self.isReady)
+        self.readyFlag = readyFlag
+        self.readyFlag.ready = True
+        self.worker = WorkerThread(self, self.readyFlag)
         EVT_RESULT(self,self.OnResult)
-
-    def isReady(self):
-        return self.ready
 
     def OnSize(self, event):
         #print "> OnSize"
@@ -151,17 +154,17 @@ class MainPanel(wx.Panel):
 
     def OnResult(self, event):
         #print "> OnResult", event.data
-        self.ready = False
+        self.readyFlag.ready = False
         self.img = event.data
         self.OnSize(None)
         self.OnPaint(None)
-        self.ready = True
+        self.readyFlag.ready = True
         #wx.Yield()
 
 class MainFrame(wx.Frame):
     def __init__(self, parent):
         wx.Frame.__init__(self, parent, -1, title='Android screencast', size=(600,800))
-        self.panel = MainPanel(self)
+        self.panel = MainPanel(self, Value())
         self.Show()
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
